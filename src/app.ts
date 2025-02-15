@@ -1,32 +1,30 @@
-const { v4: uuidv4 } = require('uuid');
+const {v4: uuidv4} = require('uuid');
 
 ////////////////////////////////////
 // FAKE SEAT RESERVATION SERVICE
 ////////////////////////////////////
-import { ZBClient } from "zeebe-node";
-require("dotenv").config();
+import {ZBClient} from "zeebe-node";
 
 const zeebeClient = new ZBClient();
+
 const worker = zeebeClient.createWorker('reserve-seats', reserveSeatsHandler)
 
-function reserveSeatsHandler(job, _, worker) {  
-  console.log("\n\n Reserve seats now...");
-  console.log(job);
+function reserveSeatsHandler(job, _, worker) {
+    console.log("\n\n Reserve seats now...");
+    console.log(job);
 
-  // Do the real reservation
-  // TODO: Fake some results! Fake an error (when exactly?)
-  if ("seats" !== job.variables.simulateBookingFailure) {
-    console.log("Successul :-)");
-    return job.complete({
-        reservationId: "1234",
-      });
-  } else {
-    console.log("ERROR: Seats could not be reserved!");
-    return job.error("ErrorSeatsNotAvailable");
-  }
+    // Do the real reservation
+    // TODO: Fake some results! Fake an error (when exactly?)
+    if ("seats" !== job.variables.simulateBookingFailure) {
+        console.log("Successul :-)");
+        return job.complete({
+            reservationId: "1234",
+        });
+    } else {
+        console.log("ERROR: Seats could not be reserved!");
+        return job.error("ErrorSeatsNotAvailable");
+    }
 }
-
-
 
 
 ////////////////////////////////////
@@ -36,36 +34,36 @@ var amqp = require('amqplib/callback_api');
 
 const queuePaymentRequest = 'paymentRequest';
 const queuePaymentResponse = 'paymentResponse';
+const rabbitmqHost = process.env.RABBITMQ_HOST || 'amqp://rabbitmq';
 
-amqp.connect('amqp://rabbitmq', function(error0, connection) {
-  if (error0) {
-    throw error0;
-  }
-  connection.createChannel(function(error1, channel) {
-    if (error1) {
-      throw error1;
+amqp.connect(rabbitmqHost, function (error0, connection) {
+    if (error0) {
+        throw error0;
     }
-    
-    channel.assertQueue(queuePaymentRequest, { durable: true });
-    channel.assertQueue(queuePaymentResponse, {durable: true });
+    connection.createChannel(function (error1, channel) {
+        if (error1) {
+            throw error1;
+        }
 
-    channel.consume(queuePaymentRequest, function(inputMessage) {
-      var paymentRequestId =  inputMessage.content.toString();
-      var paymentConfirmationId = uuidv4();
+        channel.assertQueue(queuePaymentRequest, {durable: true});
+        channel.assertQueue(queuePaymentResponse, {durable: true});
 
-      console.log("\n\n [x] Received payment request %s", paymentRequestId);
+        channel.consume(queuePaymentRequest, function (inputMessage) {
+            var paymentRequestId = inputMessage.content.toString();
+            var paymentConfirmationId = uuidv4();
 
-      var outputMessage = '{"paymentRequestId": "' + paymentRequestId + '", "paymentConfirmationId": "' + paymentConfirmationId + '"}';
+            console.log("\n\n [x] Received payment request %s", paymentRequestId);
 
-      channel.sendToQueue(queuePaymentResponse, Buffer.from(outputMessage));
-      console.log(" [x] Sent payment response %s", outputMessage);
-  
-    }, {
-        noAck: true
+            var outputMessage = '{"paymentRequestId": "' + paymentRequestId + '", "paymentConfirmationId": "' + paymentConfirmationId + '"}';
+
+            channel.sendToQueue(queuePaymentResponse, Buffer.from(outputMessage));
+            console.log(" [x] Sent payment response %s", outputMessage);
+
+        }, {
+            noAck: true
+        });
     });
-  });
 });
-
 
 
 ////////////////////////////////////
@@ -75,11 +73,11 @@ var express = require("express");
 var app = express();
 
 app.listen(3000, () => {
-  console.log("HTTP Server running on port 3000");
+    console.log("HTTP Server running on port 3000");
 });
 
 app.get("/ticket", (req, res, next) => {
-  var ticketId = uuidv4();
-  console.log("\n\n [x] Create Ticket %s", ticketId);
-  res.json({"ticketId" : ticketId});
+    var ticketId = uuidv4();
+    console.log("\n\n [x] Create Ticket %s", ticketId);
+    res.json({"ticketId": ticketId});
 });
