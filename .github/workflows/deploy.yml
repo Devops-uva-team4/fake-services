@@ -1,0 +1,92 @@
+name: Deploy Fake Services
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-central-1  # Ensure consistency across AWS services
+  ECR_REGISTRY: 242201290994.dkr.ecr.eu-central-1.amazonaws.com
+  ECR_REPOSITORY: fake-services
+  CLUSTER_NAME: ticket-booking-k8s.obsessionforlearning.com
+  STATE_STORE: s3://ticket-booking-k8s
+
+jobs:
+  build-and-deploy:
+    name: Build Node.js App, Push to ECR & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+      - name: Build & Push Docker Image
+        run: |
+          IMAGE_TAG=${{ github.sha }}  # Unique commit SHA tag
+          
+          # Create a new builder instance
+          docker buildx create --use
+          
+          # Build and push the image, AND save a local copy
+          docker buildx build --platform linux/amd64 \
+            --tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            --output=type=docker . 
+          
+          # Push the image to ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+
+      - name: Install Kops
+        run: |
+          curl -LO https://github.com/kubernetes/kops/releases/latest/download/kops-linux-amd64
+          chmod +x kops-linux-amd64
+          sudo mv kops-linux-amd64 /usr/local/bin/kops
+
+      - name: Export Kops Cluster Configuration
+        run: |
+          export KOPS_STATE_STORE=$STATE_STORE
+          kops export kubecfg --name $CLUSTER_NAME --state=$STATE_STORE --admin
+          kubectl version --client
+
+      - name: Create ConfigMap from GitHub Secrets
+        run: |
+          kubectl create configmap fake-services-config \
+            --from-literal=RABBITMQ_URL="amqp://rabbitmq" \
+            --from-literal=ZEEBE_ADDRESS="${{ secrets.ZEEBE_ADDRESS }}" \
+            --from-literal=ZEEBE_CLIENT_ID="${{ secrets.ZEEBE_CLIENT_ID }}" \
+            --from-literal=ZEEBE_CLIENT_SECRET="${{ secrets.ZEEBE_CLIENT_SECRET }}" \
+            --from-literal=ZEEBE_AUTHORIZATION_SERVER_URL="${{ secrets.ZEEBE_AUTHORIZATION_SERVER_URL }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy to Kubernetes
+        run: |
+          
+          sed -i "s/LATEST_SHA/${{ github.sha }}/g" k8s/fake-services.yaml
+          kubectl apply -f k8s/fake-services.yaml
+          kubectl rollout restart deployment/fake-services  # Force pod restart
+
+      - name: Check Deployment Status
+        run: |
+          kubectl rollout status deployment/fake-services
+          kubectl get pods
